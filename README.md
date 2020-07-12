@@ -1,5 +1,5 @@
 # qualis
-R scripts for analyses and plots presented in the preprint "QUALIS: The journal ranking system undermining the impact of Brazilian science": https://www.biorxiv.org/content/10.1101/2020.07.05.188425v1
+R scripts for analyses and plots presented in the preprint "QUALIS: The journal ranking system undermining the impact of Brazilian science": https://www.biorxiv.org/content/10.1101/2020.07.05.188425v2 
 
 - Scripts are contained in files Qualis_v3.R and Scimago_v2.R
 
