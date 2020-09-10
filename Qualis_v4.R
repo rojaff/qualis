@@ -1,6 +1,7 @@
 
 library(tidyverse)
 library(broom)
+library(viridis)
 
 ### Load and prepare QUALIS adata ----
 ## Data downloaded from: https://sucupira.capes.gov.br/sucupira/public/consultas/coleta/veiculoPublicacaoQualis/listaConsultaGeralPeriodicos.jsf
@@ -39,7 +40,7 @@ for(i in 1: length(capes)){
   
   dnamesF
   
-  ### Prepare datasets
+### Prepare datasets
   capes2 <- list()
   for(k in 1:length(capes)){
     capes2[[k]] <- capes[[k]] %>% 
@@ -47,7 +48,7 @@ for(i in 1: length(capes)){
              Area = dnamesF[k])
   }
   
-  ### Bind dataframes and rename Area
+### Bind dataframes and rename Area
   capesF <- bind_rows(capes2)
   capesF <- capesF %>% mutate(Area = fct_recode(Area, admin_pub_emp_cien_cont_tur = "administracao_publica_e_de_empresas_ciencias_contabeis_e_turismo"))
   head(capesF)
@@ -55,7 +56,8 @@ for(i in 1: length(capes)){
 
 ### Load and prepare Scopus data ----
 ## Data downloaded from: https://www.researchgate.net/publication/330967992_List_of_Scopus_Index_Journals_February_2019_New
-scopus <- read.csv("ListofScopusIndexJournalsFebruary2019.csv", sep=",")
+## Double check leading zeros in ISSN - Need to set column format to text
+scopus <- read.csv("ListofScopusIndexJournalsFebruary2019_v2.csv", sep=",")
 scopus <- scopus[, -c(1:2)]
 head(scopus)
 summary(scopus$X2017.CiteScore)
@@ -65,6 +67,8 @@ length(unique(scopus$Print.ISSN)) ## Total number of journals in the Scopus data
 #### Get QUALIS journals with CiteScore
 capes.scopus <- capesF %>% inner_join(scopus, by = c("ISSN" = "Print.ISSN")) %>% na.omit()
 length(unique(capes.scopus$ISSN)) ## Total number of QUALIS journals with a Scopus CiteScore 2017
+length(unique(capesF$ISSN)) ## Total number of journals in QUALIS
+9985*100/27619
 
 nested <- capes.scopus %>% group_by(Area) %>% nest() %>%
   mutate(value = map(data, ~length(unique(.x$ISSN))),
@@ -75,6 +79,10 @@ nested %>% arrange((value)) # Number of QUALIS journals with a Scopus CiteScore 
 ## Get QUALIS journals indexed by Scopus but without CiteScore (NA)
 capes.scopus.NA <- capesF %>% inner_join(scopus, by = c("ISSN" = "Print.ISSN")) %>%
   filter(is.na(X2017.CiteScore)==TRUE)
+
+length(unique(capes.scopus.NA$ISSN)) ## Total number of indexed journals without CiteScore
+length(unique(capesF$ISSN)) ## Total number of journals in QUALIS
+835*100/27619
 
 nested.NA <- capes.scopus.NA %>% group_by(Area) %>% nest() %>%
   mutate(group = "Indexed without CiteScore")
@@ -95,9 +103,12 @@ capes.scopus.anti <- capesF %>% anti_join(scopus, by = c("ISSN" = "Print.ISSN"))
 
 length(unique(capesF$ISSN)) ## Total number of journals in QUALIS
 length(unique(capes.scopus.anti$ISSN)) ## Total number of QUALIS journals not indexed by Scopus
-21541*100/27619
+16760*100/27619
 all.anti <- capes.scopus.anti %>% filter(!duplicated(ISSN))
 write.csv(all.anti, file="NotIndexed_journals.csv", row.names=FALSE)
+
+capes.scopus.anti %>% filter(Estrato=="A1")  %>% 
+  group_by(T.tulo) %>% summarize(N = n()) %>% arrange(desc(N)) 
 
 nested.anti <- capes.scopus.anti %>% group_by(Area) %>% nest() %>%
   mutate(group = "Not indexed")
@@ -132,22 +143,24 @@ indexed <- com.all  %>%
   group_by(Area, group) %>%
   summarise(n = sum(value)) %>%
   mutate(percentage = n / sum(n)) %>% 
-  dplyr::filter(group=="Indexed")
+  dplyr::filter(group=="Indexed") %>% 
+  dplyr::select(-c(group, n))
 
 indexed %>% arrange(desc(percentage))
+indexed %>% summary()
 
 #### Plot proportion of journals by category (Fig. 2)
 ## Bind dataframes and add an entry for missing Area ciencias_da_religiao_e_teologia
 com.N <- bind_rows(nested, nested.NA, nested.anti) %>% dplyr::select(-data) %>%
-  mutate(group = as.factor(group)) %>%
-  bind_rows(tibble(Area = "ciencias_da_religiao_e_teologia", value=0, group="Indexed without CiteScore"))
-#com.N %>% filter(Area=="ciencias_da_religiao_e_teologia")
+  mutate(group = as.factor(group)) %>% left_join(indexed, by="Area")
 
-com.N %>% mutate(group = factor(group, levels = c("Not indexed", "Indexed with CiteScore", "Indexed without CiteScore"))) %>%
-  rename(Type = "group") %>%
-  ggplot(aes(x=fct_reorder(Area, (value)), y=value)) + 
-  geom_area(aes(colour = Type, group=Type, fill = Type)) + 
+Area <- com.N %>% 
+  mutate(group = factor(group, levels = c("Not indexed", "Indexed with CiteScore", "Indexed without CiteScore"))) %>%
+  rename(Type = "group") %>% 
+  ggplot(aes(x=fct_reorder(Area, (percentage)), y=value)) + 
+  geom_area(aes(group=Type, fill = Type)) + 
   ylab("Number of journals") + xlab("Area") + 
+  scale_fill_manual(values=viridis(n=3)) +
   theme_minimal() + theme(
     legend.position = "top", 
     legend.title=element_text(size=10, face="bold"),
@@ -155,7 +168,9 @@ com.N %>% mutate(group = factor(group, levels = c("Not indexed", "Indexed with C
     axis.title.x = element_text(size=15, face="bold"),
     axis.title.y = element_text(size=15, face="bold"))
 
-ggsave("Area.png", width = 20, height = 15, units = "cm", dpi = 300)
+Area 
+                     
+ggsave("Fig2.tif", plot=Area, device = "tiff", width = 20, height = 15, units = "cm", dpi = 300)
 
 ## Calculate percentage by Area
 com.N2 <- com.N  %>%
@@ -168,8 +183,9 @@ com.N2 %>%
   mutate(group = factor(group, levels = c("Not indexed", "Indexed with CiteScore", "Indexed without CiteScore"))) %>%
   rename(Type = "group") %>%
   ggplot(aes(x=fct_reorder(Area, (percentage)), y=percentage)) + 
-  geom_area(aes(colour = Type, group=Type, fill = Type)) + 
+  geom_area(aes(group=Type, fill = Type)) + 
   ylab("Number of journals") + xlab("Area") + 
+  scale_fill_manual(values=viridis(n=3)) +
   theme_minimal() + theme(
     legend.position = "top", 
     legend.title=element_text(size=10, face="bold"),
@@ -177,7 +193,7 @@ com.N2 %>%
     axis.title.x = element_text(size=15, face="bold"),
     axis.title.y = element_text(size=15, face="bold"))
 
-ggsave("Area.png", width = 20, height = 15, units = "cm", dpi = 300)
+#ggsave("Area.png", width = 20, height = 15, units = "cm", dpi = 300)
 
 #### CiteScore Analyses ----
 ### Indicators
@@ -188,7 +204,7 @@ kw.res <- nested %>%
   unnest(res)
 
 kw.res %>% arrange(desc(statistic))# %>% dplyr::select(Area)
-kw.res %>% filter(p.value>=0.05)
+kw.res %>% filter(p.value>=0.05) %>% dplyr::select(Area)
 
 ## N A1 journals with IF below median
 median.res <- kw.res %>% 
@@ -274,13 +290,13 @@ median.res$median.comp <- unlist(COMP)
 median.res %>% arrange((median.comp)) #%>% dplyr::select(Area)
 
 #### Results ----
-unique(com.N$group)
+table(com.N$group)
 CiteScore <- com.N %>% mutate(Area = as.factor(Area)) %>% filter(group=="Indexed with CiteScore")
 NoCiteScore <- com.N %>% mutate(Area = as.factor(Area)) %>% filter(group=="Indexed without CiteScore")
 NotIndexed <- com.N %>% mutate(Area = as.factor(Area)) %>% filter(group=="Not indexed")
 
-identical(results$Area, CiteScore$Area)
-identical(results$Area, indexed$Area)
+identical(median.res$Area, CiteScore$Area)
+identical(median.res$Area, indexed$Area)
 
 results <- median.res
 results$PIndexed <- indexed$percentage
@@ -289,10 +305,10 @@ results$NoCiteScore <- NoCiteScore$value
 results$NotIndexed <- NotIndexed$value
 
 resultsF <- results %>% dplyr::select(Area, NotIndexed, NoCiteScore, CiteScore, PIndexed, statistic, p.value, median.comp, Nmedian)
-resultsF %>% arrange((NoCiteScore))
+resultsF %>% arrange((CiteScore))
 
 resultsF %>% 
-  arrange(statistic, median.comp, Nmedian) %>%
+  arrange(Area) %>%
   write.csv(file = "Results.csv", row.names=FALSE)
 
 #### Table 1
@@ -305,7 +321,7 @@ resultsF %>% filter(PIndexed>=quantile(resultsF$PIndexed, probs = seq(0, 1, 0.05
 resultsF %>% filter(statistic<=quantile(resultsF$statistic, probs = seq(0, 1, 0.05))[2]) %>% select(Area)
 resultsF %>% filter(statistic>=quantile(resultsF$statistic, probs = seq(0, 1, 0.05))[20]) %>% select(Area)
 
-resultsF %>% filter(median.comp<quantile(resultsF$median.comp, probs = seq(0, 1, 0.05))[2]) %>% select(Area) #%>% print(n=23)
+resultsF %>% filter(median.comp<quantile(resultsF$median.comp, probs = seq(0, 1, 0.05))[3]) %>% select(Area) #%>% print(n=23)
 resultsF %>% filter(median.comp>=quantile(resultsF$median.comp, probs = seq(0, 1, 0.05))[20]) %>% select(Area)
 
 resultsF %>% filter(Nmedian<=quantile(resultsF$Nmedian, probs = seq(0, 1, 0.05))[2]) %>% select(Area)
@@ -367,7 +383,7 @@ Pmcomp
 Pnmed
 Pindex
 
-ggsave("Pindex.png", width = 20, height = 20, units = "cm", dpi = 300)
+ggsave("Pkw.png", plot=Pkw, width = 20, height = 20, units = "cm", dpi = 300)
 # tiff(filename = "Pmcomp.tif",
 #      width = 15, height = 15, units = "cm",
 #      compression = "lzw", bg = "white", res = 300)
@@ -378,7 +394,14 @@ ggsave("Pindex.png", width = 20, height = 20, units = "cm", dpi = 300)
 # grid.arrange(Pkw, Pmcomp, Pnmed, ncol=1)
 
 #### General plot of CiteScore by class per subject Area (Fig. 3)
-Qplot <- median.res %>% unnest(data) %>%
+median.res[1:9, ]
+median.res[10:18, ]
+median.res[19:27, ]
+median.res[28:36, ]
+median.res[37:45, ]
+median.res[46:49, ]
+
+Qplot <- median.res[37:45, ] %>% unnest(data) %>%
   ggplot(aes(y=X2017.CiteScore, x=Estrato)) + 
   geom_boxplot() + #outlier.shape=NA
   #coord_cartesian(ylim=c(0, upper.limit)) +
@@ -386,11 +409,12 @@ Qplot <- median.res %>% unnest(data) %>%
   ylab("Scopus CiteScore (2017)") + xlab("QUALIS Category (2013-2016)") + #ylim(0,15) +
   facet_wrap(~ Area,  scales = "free") +
   theme_minimal() + theme(
-    strip.text.x = element_text(size = 4, face="bold"),
-    axis.title.x = element_text(size=20, face="bold"),
-    axis.title.y = element_text(size=20, face="bold"))
+    strip.text.x = element_text(size = 8, face="bold"),
+    axis.title.x = element_text(size=15, face="bold"),
+    axis.title.y = element_text(size=15, face="bold"))
 
 Qplot
-ggsave("Qplot.png", width = 30, height = 30, units = "cm", dpi = 300)
+ggsave("Fig3e.tif", plot=Qplot, device = "tiff", width = 22, height = 12, units = "cm", dpi = 300)
+ggsave("Qplot.png", plot=Qplot, width = 35, height = 35, units = "cm", dpi = 300)
 
 
